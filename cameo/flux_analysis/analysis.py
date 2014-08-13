@@ -115,7 +115,7 @@ def phenotypic_phase_plane(model, variables=[], objective=None, points=20, view=
            undo=partial(setattr, model, 'objective', model.objective))
 
     variable_reactions = _ids_to_reactions(model, variables)
-    variables_min_max = flux_variability_analysis(model, reactions=variable_reactions)
+    variables_min_max = flux_variability_analysis(model, reactions=variable_reactions, view=view)
     grid = [numpy.linspace(lower_bound, upper_bound, points, endpoint=True) for reaction_id, lower_bound, upper_bound in
             variables_min_max.itertuples()]
     grid_generator = itertools.product(*grid)
@@ -174,6 +174,8 @@ def _flux_variability_analysis(model, reactions=None):
             fva_sol[reaction.id]['lower_bound'] = solution.f
         except Unbounded:
             fva_sol[reaction.id]['lower_bound'] = -numpy.inf
+        except Infeasible:
+            fva_sol[reaction.id]['lower_bound'] = 0
     for reaction in reactions:
         model.objective = reaction
         model.objective.direction = 'max'
@@ -182,6 +184,8 @@ def _flux_variability_analysis(model, reactions=None):
             fva_sol[reaction.id]['upper_bound'] = solution.f
         except Unbounded:
             fva_sol[reaction.id]['upper_bound'] = numpy.inf
+        except Infeasible:
+            fva_sol[reaction.id]['lower_bound'] = 0
     model.objective = original_objective
     return pandas.DataFrame.from_dict(fva_sol, orient='index')
 
@@ -238,6 +242,8 @@ def _cycle_free_fva(model, reactions=None, sloppy=True):
                         fva_sol[reaction.id]['lower_bound'] = -numpy.inf
         except Unbounded:
             fva_sol[reaction.id]['lower_bound'] = -numpy.inf
+        except Infeasible:
+            fva_sol[reaction.id]['lower_bound'] = 0
         except Exception as e:
             print reaction.id
             raise e
@@ -270,10 +276,10 @@ def _cycle_free_fva(model, reactions=None, sloppy=True):
                     except Unbounded:
                         fva_sol[reaction.id]['upper_bound'] = numpy.inf
         except Unbounded:
-            print 'Problem unbounded'
             fva_sol[reaction.id]['upper_bound'] = numpy.inf
+        except Infeasible:
+            fva_sol[reaction.id]['upper_bound'] = 0
         except Exception as e:
-            print reaction.id
             raise e
             # print model.reactions.Biomass_Ecoli_core_N_LPAREN_w_FSLASH_GAM_RPAREN__Nmet2.lower_bound
     model.objective = original_objective
@@ -302,12 +308,12 @@ class _PhenotypicPhasePlaneChunkEvaluator(object):
             self.model.objective.direction = 'min'
             try:
                 solution = self.model.solve().f
-            except UndefinedSolution:
+            except Infeasible:
                 solution = 0
             interval.append(solution)
             self.model.objective.direction = 'max'
             try:
-                solution = self.model.optimize().f
+                solution = self.model.solve().f
             except Infeasible:
                 solution = 0
             interval.append(solution)
@@ -365,6 +371,25 @@ def _fbip_fva(model, knockouts, view):
 
     tm.reset()
     return perturbation
+
+
+def reaction_component_production(model, reaction):
+    tm = TimeMachine()
+    for metabolite in reaction.metabolites:
+        test = Reaction("EX_%s_temp" % metabolite.id)
+        test._metabolites[metabolite] = -1
+        #hack frozen set from cobrapy to be able to add a reaction
+        metabolite._reaction = set(metabolite._reaction)
+        tm(do=partial(model.add_reactions, [test]), undo=partial(model.remove_reactions, [test]))
+        tm(do=partial(setattr, model, 'objective', test.id), undo=partial(setattr, model, 'objective', model.objective))
+        try:
+            print metabolite.id, "= ", model.solve().f
+        except SolveError:
+            print metabolite, " cannot be produced (reactions: %s)" % metabolite.reactions
+        finally:
+            tm.reset()
+
+
 
 if __name__ == '__main__':
     import time

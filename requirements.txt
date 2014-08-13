@@ -6,9 +6,9 @@ bokeh==0.4.4
 blessings==1.5.1
 progressbar>=2.2
 Jinja2==2.7.3
-pandas==0.14.0
+pandas>=0.14.0
 ordered-set==1.2
 inspyred==1.0
 cobra==0.3.0b3
--e git+https://github.com/biosustain/optlang.git@21c6d5078c1d0d964c14529b2e32e2af618577cb#egg=optlang
+-e git+https://github.com/biosustain/optlang.git@43403aaa94b1e9aa2631b364fdfacf1c7940b57e#egg=optlang
 -e git+https://github.com/biosustain/ipython_notebook_utils.git@b9e68cc2fdbae30d3482306ffcbecbf358530267#egg=ipython_notebook_utils

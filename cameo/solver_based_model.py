@@ -219,8 +219,9 @@ class Reaction(OriginalReaction):
                 try:
                     aux_var = model.solver._add_variable(
                         model.solver.interface.Variable(self._get_reverse_id(), lb=0, ub=0))
-                except:
-                    pass
+                except Exception as e:
+                    print self
+                    print e
                 for met, coeff in self._metabolites.iteritems():
                     model.solver.constraints[met.id] += sympy.Mul._from_args((-1 * sympy.RealNumber(coeff), aux_var))
 
@@ -481,24 +482,32 @@ class SolverBasedModel(Model):
                 cloned_reaction_list.append(Reaction.clone(reaction, model=self))
             else:
                 cloned_reaction_list.append(reaction)
+        constr_terms = dict()
         for reaction in cloned_reaction_list:
             try:
                 reaction_variable = self.solver.variables[reaction.id]
             except KeyError:
-                self.solver.add(
-                    self.solver.interface.Variable(reaction.id, lb=reaction._lower_bound, ub=reaction._upper_bound))
-                reaction_variable = self.solver.variables[reaction.id]
+                reaction_variable = self.solver.interface.Variable(reaction.id, lb=reaction._lower_bound,
+                                                                   ub=reaction._upper_bound)
+                self.solver.add(reaction_variable)
 
             metabolite_coeff_dict = reaction.metabolites
             for metabolite, coeff in metabolite_coeff_dict.iteritems():
-                try:
-                    metabolite_constraint = self.solver.constraints[metabolite.id]
-                except KeyError:  # cannot override add_metabolites here as it is not used by cobrapy in add_reactions
-                    self.solver.add(self.solver.interface.Constraint(S.Zero, lb=0, ub=0,
-                                                                     name=metabolite.id))  # TODO: 1 will not work ...
-                    metabolite_constraint = self.solver.constraints[metabolite.id]
-                metabolite_constraint += coeff * reaction_variable
+                # if self.solver.constraints.has_key(metabolite.id):
+                if constr_terms.has_key(metabolite.id):
+                    constr_terms[metabolite.id].append(
+                        sympy.Mul._from_args([sympy.RealNumber(coeff), reaction_variable]))
+                else:
+                    constr_terms[metabolite.id] = list()
 
+        for met_id, terms in constr_terms.iteritems():
+            try:
+                metabolite_constraint = self.solver.constraints[met_id]
+                metabolite_constraint += sympy.Add._from_args(terms)
+            except KeyError:  # cannot override add_metabolites here as it is not used by cobrapy in add_reactions
+                self.solver._add_constraint(
+                    self.solver.interface.Constraint(S.Zero, lb=0, ub=0, name=met_id, sloppy=True),
+                    sloppy=True)  # TODO: 1 will not work ...
         super(SolverBasedModel, self).add_reactions(cloned_reaction_list)
 
     def remove_reactions(self, the_reactions):
@@ -566,9 +575,13 @@ class SolverBasedModel(Model):
             solution = self.optimize(*args, **kwargs)
             self.solver.configuration.presolve = False
             if solution.status is not 'optimal':
-                raise exceptions._OPTLANG_TO_EXCEPTIONS_DICT.get(solution.status, SolveError)(
+                status = solution.status
+                # GLPK 4.45 hack http://lists.gnu.org/archive/html/help-glpk/2013-09/msg00015.html
+                if status == 'undefined' and self.solver.interface.__name__ == 'optlang.glpk_interface' and self.solver.interface.glp_version() == '4.45':
+                    status = 'infeasible'
+                raise exceptions._OPTLANG_TO_EXCEPTIONS_DICT.get(status, SolveError)(
                     'Solving model %s did not return an optimal solution. The returned solution status is "%s"' % (
-                        self, solution.status))
+                        self, status))
             return solution
         else:
             return solution
@@ -635,6 +648,27 @@ class SolverBasedModel(Model):
             finally:
                 time_machine.reset()
         return essential
+
+    def medium(self):
+        reaction_ids = []
+        reaction_names = []
+        lower_bounds = []
+        upper_bounds = []
+        for ex in self.exchanges:
+            metabolite = ex.metabolites.keys()[0]
+            coeff = ex.metabolites[metabolite]
+            if coeff * ex.lower_bound > 0:
+                reaction_ids.append(ex.id)
+                reaction_names.append(ex.name)
+                lower_bounds.append(ex.lower_bound)
+                upper_bounds.append(ex.upper_bound)
+
+        return DataFrame({'reaction_id': reaction_ids,
+                          'reaction_name': reaction_names,
+                          'lower_bound': lower_bounds,
+                          'upper_bound': upper_bounds},
+                         index=None, columns=['reaction_id', 'reaction_name', 'lower_bound', 'upper_bound'])
+
 
     # TODO: describe the formats in doc
     def load_medium(self, medium, copy=False):
