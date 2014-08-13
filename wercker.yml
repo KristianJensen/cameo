@@ -1,4 +1,4 @@
-box: wercker/python
+box: phantomas1234/cameo-wercker-box@0.0.1
 # Build definition
 build:
   # The steps that will be executed on build
